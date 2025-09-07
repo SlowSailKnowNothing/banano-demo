@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import { Upload, Image as ImageIcon, X, ArrowRight } from 'lucide-react';
+import { Upload, Image as ImageIcon, X, ArrowRight, Wand2 } from 'lucide-react';
 import { useState, useRef, useCallback } from 'react';
 import { ImageUploadProps } from '../types';
 
@@ -10,10 +10,15 @@ export default function ImageUpload({
   onImageUpload, 
   currentImage, 
   isLoading = false,
-  onNext
+  onNext,
+  onSkip,
+  onCharacterPromptSubmit,
+  initialCharacterPrompt
 }: ImageUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [characterPrompt, setCharacterPrompt] = useState(initialCharacterPrompt || '');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // 处理文件选择
   const handleFileSelect = useCallback((file: File) => {
@@ -77,6 +82,21 @@ export default function ImageUpload({
       fileInputRef.current.value = '';
     }
   }, [currentImage, onImageUpload]);
+
+  // 文本生成主角（占位：仅设置提示并进入下一步，后续由生成阶段使用）
+  const handleGenerateCharacter = useCallback(async () => {
+    if (!characterPrompt.trim()) return;
+    setIsGenerating(true);
+    try {
+      // 这里先不直接生成图片，仅记录“有角色描述”，交由后续图片生成阶段作为参考
+      // 用 data-url 伪占位，保持后续逻辑简单；真正生成在生成阶段完成
+      onImageUpload(null as any, null as any);
+      onCharacterPromptSubmit?.(characterPrompt.trim());
+      onNext?.();
+    } finally {
+      setIsGenerating(false);
+    }
+  }, [characterPrompt, onImageUpload, onNext]);
 
   return (
     <div className="w-full max-w-2xl mx-auto">
@@ -178,6 +198,46 @@ export default function ImageUpload({
               <ArrowRight className="w-5 h-5" />
             </button>
           )}
+        </div>
+      )}
+
+      {/* 或者：用文字描述主角 / 或跳过 */}
+      {!currentImage && (
+        <div className="mt-6 space-y-3">
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              不上传图片？用文字描述你的主角（可选）
+            </label>
+            <textarea
+              value={characterPrompt}
+              onChange={(e) => setCharacterPrompt(e.target.value)}
+              placeholder="例如：一只戴着蓝色围巾的小狐狸，绿色眼睛，开朗勇敢"
+              className="w-full p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={3}
+              disabled={isGenerating}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={handleGenerateCharacter}
+                disabled={isGenerating || !characterPrompt.trim()}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-md disabled:opacity-60"
+              >
+                <Wand2 className="w-4 h-4" />
+                依据文字去生成主角（稍后生成）
+              </button>
+              {onSkip && (
+                <button
+                  onClick={onSkip}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700"
+                >
+                  先不设置主角，直接讲故事
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              提示：我们会在“生成图片”阶段根据你的文字描述先生成主角的参考图，再继续生成分镜场景。
+            </p>
+          </div>
         </div>
       )}
     </div>

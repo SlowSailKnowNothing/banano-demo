@@ -29,6 +29,7 @@ export interface Storyboard {
   characterAction: string;
   setting: string;
   mood: string;
+  customPrompt?: string; // 用户可二次编辑的场景提示词
 }
 
 // 生成的图片信息
@@ -46,6 +47,9 @@ export interface ImageUploadProps {
   currentImage: string | null;
   isLoading?: boolean;
   onNext?: () => void;
+  onSkip?: () => void;
+  onCharacterPromptSubmit?: (prompt: string) => void;
+  initialCharacterPrompt?: string;
 }
 
 // 故事编辑器组件的属性
@@ -59,7 +63,7 @@ export interface StoryEditorProps {
 // 分镜生成器组件的属性
 export interface StoryboardGeneratorProps {
   story: string;
-  characterImage: string;
+  characterImage: string | null;
   onStoryboardsGenerated: (storyboards: Storyboard[]) => void;
   isLoading?: boolean;
 }
@@ -67,7 +71,10 @@ export interface StoryboardGeneratorProps {
 // 图片生成器组件的属性
 export interface ImageGeneratorProps {
   storyboards: Storyboard[];
-  characterImage: string;
+  characterImage: string | null;
+  characterPrompt?: string;
+  story: string;
+  onReferenceReady?: (url: string) => void;
   onImagesGenerated: (images: GeneratedImage[]) => void;
   isLoading?: boolean;
 }

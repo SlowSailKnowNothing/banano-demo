@@ -12,15 +12,57 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 export default function ImageGenerator({ 
   storyboards, 
   characterImage, 
+  characterPrompt,
+  story,
+  onReferenceReady,
   onImagesGenerated, 
-  isLoading = false 
+  isLoading = false,
 }: ImageGeneratorProps) {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [currentGenerating, setCurrentGenerating] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [referenceReady, setReferenceReady] = useState<boolean>(!!characterImage);
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const withTimeout = async <T,>(p: Promise<T>, ms: number): Promise<T> => {
+    let timer: any;
+    try {
+      return await Promise.race([
+        p,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('请求超时，请稍后重试')), ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  // 如果没有参考图，先生成“主角立绘”作为统一参考
+  const ensureReferenceImage = useCallback(async (): Promise<string | null> => {
+    if (referenceReady && characterImage) return characterImage;
+    const identity = characterPrompt?.trim() || story.slice(0, 300);
+    if (!identity) return null;
+
+    const preface = `Create a clean, front-facing portrait or full-body illustration of the main character for a children's storybook. White or simple background. Rich colors.`;
+    const parts = [{ text: `${preface}\n\nMain character identity: ${identity}` }];
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image-preview',
+      contents: parts as any,
+      config: { responseModalities: [Modality.IMAGE] },
+    });
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if ((part as any).inlineData?.data) {
+        const data = (part as any).inlineData.data as string;
+        const url = `data:image/png;base64,${data}`;
+        setReferenceReady(true);
+        onReferenceReady?.(url);
+        return url;
+      }
+    }
+    return null;
+  }, [characterImage, characterPrompt, story, onReferenceReady, referenceReady]);
 
   // 生成单个场景图片（带一次内部语义重试，非指数退避）
   const generateSingleImage = useCallback(async (storyboard: Storyboard): Promise<GeneratedImage> => {
@@ -69,22 +111,36 @@ export default function ImageGenerator({
         return { base64, mimeType };
       };
 
-      const { base64: characterImageBase64, mimeType } = await getBase64FromImageUrl(characterImage);
+      let promptParts: any[];
+      // 如果没有参考图，但有故事文本，则尝试从故事中抽取主角身份
+      let inferredIdentity = '';
+      if (!characterImage && !characterPrompt && story) {
+        // 简单启发：取故事的前 300 字作为身份线索
+        inferredIdentity = story.slice(0, 300);
+      }
 
-      // 参考官方示例：文本 + 图片作为 parts 数组传入
-      const promptParts = [
-        { text: prompt },
-        {
-          inlineData: {
-            mimeType,
-            data: characterImageBase64,
+      if (characterImage) {
+        const { base64: characterImageBase64, mimeType } = await getBase64FromImageUrl(characterImage);
+        promptParts = [
+          { text: prompt },
+          {
+            inlineData: {
+              mimeType,
+              data: characterImageBase64,
+            },
           },
-        },
-      ];
+        ];
+      } else {
+        // 无参考图：若有主角文字描述，或从故事推断主角身份
+        const identityHint = (characterPrompt?.trim() || inferredIdentity)
+          ? `Use this as the main character identity: ${characterPrompt?.trim() || inferredIdentity}. Keep the identity consistent across all scenes.`
+          : 'If a character identity is implied, keep it consistent across scenes.';
+        promptParts = [{ text: `${prompt}\n\n${identityHint}` }];
+      }
 
-      let response = await ai.models.generateContent({
+      const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image-preview',
-        contents: promptParts as any,
+        contents: promptParts,
         config: {
           responseModalities: [Modality.IMAGE],
         },
@@ -105,50 +161,8 @@ export default function ImageGenerator({
           };
         }
       }
-      // 如果没有拿到图片数据，尝试读取文本提示，并进行一次重试（更强指令 + 仅图像响应）
-      const textParts: string[] = [];
-      for (const part of response.candidates?.[0]?.content?.parts || []) {
-        if ((part as any).text) textParts.push((part as any).text as string);
-      }
-
-      // 进行一次重试：明确要求仅返回图片
-      const retryParts = [
-        {
-          text:
-            `${prompt}\n\nIMPORTANT: Return only ONE image. Do not include any text in the response. Use the provided reference to keep character identity consistent.`,
-        },
-        {
-          inlineData: {
-            mimeType,
-            data: characterImageBase64,
-          },
-        },
-      ];
-
-      response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image-preview',
-        contents: retryParts as any,
-        config: {
-          responseModalities: [Modality.IMAGE],
-        },
-      });
-
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-          const imageData = part.inlineData.data;
-          const imageUrl = `data:image/png;base64,${imageData}`;
-          return {
-            id: `image-${storyboard.id}-${Date.now()}`,
-            storyboardId: storyboard.id,
-            imageUrl,
-            prompt,
-            generatedAt: new Date(),
-          };
-        }
-      }
-
-      const fallbackMsg = textParts.join('\n').slice(0, 300) || '无文本响应';
-      throw new Error(`未收到图片数据（模型返回文本）：${fallbackMsg}`);
+      // 未拿到图片则直接抛错，交由带超时控制的重试层处理
+      throw new Error('未收到图片数据');
     } catch (error) {
       console.error('生成图片时出错:', error);
       throw error;
@@ -165,7 +179,8 @@ export default function ImageGenerator({
       let attempt = 0;
       while (true) {
         try {
-          return await generateSingleImage(storyboard);
+          // 为单次请求增加超时（例如 35s）
+          return await withTimeout(generateSingleImage(storyboard), 35000);
         } catch (e) {
           if (attempt >= maxRetries) {
             throw e;
@@ -181,15 +196,29 @@ export default function ImageGenerator({
 
   // 批量生成所有图片
   const generateAllImages = useCallback(async () => {
-    if (!storyboards.length || !characterImage) return;
+    if (!storyboards.length) return;
 
     setError(null);
     setProgress(0);
     setGeneratedImages([]);
+    // 立刻进入加载态（包含前置参考图阶段）
+    setCurrentGenerating('preparing');
 
     const newGeneratedImages: GeneratedImage[] = [];
+    const failedStoryboards: Storyboard[] = [];
     
     try {
+      // 前置：若没有参考图，先生成统一主角立绘
+      let referenceUrl = characterImage;
+      if (!referenceUrl) {
+        try {
+          referenceUrl = await ensureReferenceImage();
+          if (referenceUrl) await sleep(800);
+        } catch (e) {
+          console.warn('参考图生成失败，将直接按场景生成：', e);
+        }
+      }
+
       for (let i = 0; i < storyboards.length; i++) {
         const storyboard = storyboards[i];
         setCurrentGenerating(storyboard.id);
@@ -199,6 +228,12 @@ export default function ImageGenerator({
           newGeneratedImages.push(generatedImage);
           setGeneratedImages([...newGeneratedImages]);
           setProgress(((i + 1) / storyboards.length) * 100);
+          // 成功则从失败集合移除
+          if (failedIds.has(storyboard.id)) {
+            const next = new Set(failedIds);
+            next.delete(storyboard.id);
+            setFailedIds(next);
+          }
           
           // 每张成功后延迟 1s，进一步降低速率限制概率
           if (i < storyboards.length - 1) {
@@ -208,11 +243,49 @@ export default function ImageGenerator({
           console.error(`生成场景 ${storyboard.sceneNumber} 的图片时出错:`, error);
           // 继续生成其他图片，但记录错误
           setError(`场景 ${storyboard.sceneNumber} 生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
+          failedStoryboards.push(storyboard);
+          const next = new Set(failedIds);
+          next.add(storyboard.id);
+          setFailedIds(next);
+        }
+      }
+      // 二次机会：对失败的场景再统一重试一次
+      if (failedStoryboards.length > 0) {
+        setCurrentGenerating('retry');
+        for (let j = 0; j < failedStoryboards.length; j++) {
+          const sb = failedStoryboards[j];
+          try {
+            const generatedImage = await generateSingleImageWithRetry(sb, 2, 1200);
+            newGeneratedImages.push(generatedImage);
+            setGeneratedImages([...newGeneratedImages]);
+            // 重试成功也从失败集合移除
+            if (failedIds.has(sb.id)) {
+              const next = new Set(failedIds);
+              next.delete(sb.id);
+              setFailedIds(next);
+            }
+          } catch (e) {
+            console.warn(`重试场景 ${sb.sceneNumber} 仍失败:`, e);
+            const next = new Set(failedIds);
+            next.add(sb.id);
+            setFailedIds(next);
+          }
+          if (j < failedStoryboards.length - 1) {
+            await sleep(800);
+          }
         }
       }
       
       setCurrentGenerating(null);
       onImagesGenerated(newGeneratedImages);
+      const totalSucceeded = newGeneratedImages.length;
+      if (totalSucceeded < storyboards.length) {
+        const remain = storyboards.length - totalSucceeded;
+        setError(`有 ${remain} 个场景在重试后仍失败，可点击卡片上的“重试生成”。`);
+      } else {
+        setError(null);
+      }
+      // 完成回调（视频功能已回退，不再触发 onFinish）
       
     } catch (error) {
       console.error('批量生成图片时出错:', error);
@@ -227,25 +300,67 @@ export default function ImageGenerator({
     setError(null);
     
     try {
-      const newImage = await generateSingleImage(storyboard);
-      const updatedImages = generatedImages.map(img => 
-        img.storyboardId === storyboard.id ? newImage : img
-      );
-      
-      // 如果是新图片，添加到列表中
-      if (!generatedImages.find(img => img.storyboardId === storyboard.id)) {
+      const newImage = await generateSingleImageWithRetry(storyboard, 3, 800);
+      const existingIdx = generatedImages.findIndex(img => img.storyboardId === storyboard.id);
+      const updatedImages = [...generatedImages];
+      if (existingIdx >= 0) {
+        updatedImages[existingIdx] = newImage;
+      } else {
         updatedImages.push(newImage);
       }
-      
       setGeneratedImages(updatedImages);
       onImagesGenerated(updatedImages);
+      if (failedIds.has(storyboard.id)) {
+        const next = new Set(failedIds);
+        next.delete(storyboard.id);
+        setFailedIds(next);
+      }
     } catch (error) {
       console.error('重新生成图片时出错:', error);
       setError(`重新生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      const next = new Set(failedIds);
+      next.add(storyboard.id);
+      setFailedIds(next);
     } finally {
       setCurrentGenerating(null);
     }
-  }, [generatedImages, generateSingleImage, onImagesGenerated]);
+  }, [generatedImages, generateSingleImageWithRetry, onImagesGenerated, failedIds]);
+
+  // 批量重试所有失败的场景
+  const retryAllFailed = useCallback(async () => {
+    if (failedIds.size === 0) return;
+    setCurrentGenerating('retry');
+    setError(null);
+
+    const targets = storyboards.filter(sb => failedIds.has(sb.id));
+    const updatedImages = [...generatedImages];
+    const nextFailed = new Set(failedIds);
+
+    for (let i = 0; i < targets.length; i++) {
+      const sb = targets[i];
+      try {
+        const newImage = await generateSingleImageWithRetry(sb, 2, 1200);
+        const existingIdx = updatedImages.findIndex(img => img.storyboardId === sb.id);
+        if (existingIdx >= 0) {
+          updatedImages[existingIdx] = newImage;
+        } else {
+          updatedImages.push(newImage);
+        }
+        if (nextFailed.has(sb.id)) nextFailed.delete(sb.id);
+        setGeneratedImages([...updatedImages]);
+        onImagesGenerated([...updatedImages]);
+      } catch (e) {
+        console.warn(`批量重试场景 ${sb.sceneNumber} 失败:`, e);
+        nextFailed.add(sb.id);
+      }
+      if (i < targets.length - 1) {
+        await sleep(800);
+      }
+    }
+
+    setFailedIds(nextFailed);
+    setCurrentGenerating(null);
+  }, [failedIds, storyboards, generatedImages, generateSingleImageWithRetry, onImagesGenerated]);
 
   // 下载图片
   const downloadImage = useCallback((imageUrl: string, sceneNumber: number) => {
@@ -256,6 +371,7 @@ export default function ImageGenerator({
     link.click();
     document.body.removeChild(link);
   }, []);
+
 
   return (
     <div className="w-full max-w-7xl mx-auto">
@@ -282,7 +398,7 @@ export default function ImageGenerator({
         <div className="text-center mb-6">
           <button
             onClick={generateAllImages}
-            disabled={isLoading || !characterImage}
+            disabled={isLoading || storyboards.length === 0}
             className="px-8 py-3 bg-blue-600 text-white rounded-lg font-medium
                      hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
                      disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
@@ -295,13 +411,25 @@ export default function ImageGenerator({
         </div>
       )}
 
+      {/* 失败后的一键重试按钮 */}
+      {failedIds.size > 0 && !currentGenerating && (
+        <div className="mb-6 text-center">
+          <button
+            onClick={retryAllFailed}
+            className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700"
+          >
+            重试全部失败场景（{failedIds.size}）
+          </button>
+        </div>
+      )}
+
       {/* 生成进度 */}
       {currentGenerating && (
         <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <div className="flex items-center space-x-3 mb-3">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
             <span className="font-medium text-blue-800">
-              正在生成场景图片... ({Math.round(progress)}%)
+              {currentGenerating === 'preparing' ? '正在准备参考图...' : `正在生成场景图片... (${Math.round(progress)}%)`}
             </span>
           </div>
           <div className="w-full bg-blue-200 rounded-full h-2">
@@ -353,6 +481,7 @@ export default function ImageGenerator({
                           <RefreshCw className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
                         </button>
                       </div>
+                      {/* 保留图片操作按钮，不包含视频 */}
                     </>
                   ) : isGenerating ? (
                     <div className="flex flex-col items-center space-y-2">
@@ -360,15 +489,29 @@ export default function ImageGenerator({
                       <span className="text-sm text-gray-600">生成中...</span>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center space-y-2 text-gray-400">
+                    <div className="flex flex-col items-center space-y-2 text-gray-400 p-4">
                       <Palette className="w-8 h-8" />
-                      <span className="text-sm">等待生成</span>
-                      <button
-                        onClick={() => regenerateImage(storyboard)}
-                        className="text-xs text-blue-600 hover:text-blue-700 underline"
-                      >
-                        单独生成
-                      </button>
+                      {failedIds.has(storyboard.id) ? (
+                        <>
+                          <span className="text-sm text-red-600">生成失败</span>
+                          <button
+                            onClick={() => regenerateImage(storyboard)}
+                            className="text-xs text-blue-600 hover:text-blue-700 underline"
+                          >
+                            重试生成
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-sm">等待生成</span>
+                          <button
+                            onClick={() => regenerateImage(storyboard)}
+                            className="text-xs text-blue-600 hover:text-blue-700 underline"
+                          >
+                            单独生成
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -407,12 +550,8 @@ export default function ImageGenerator({
       {generatedImages.length === storyboards.length && generatedImages.length > 0 && !currentGenerating && (
         <div className="mt-8 text-center">
           <div className="inline-flex items-center space-x-2 px-6 py-3 bg-green-50 border border-green-200 rounded-lg">
-            <div className="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center">
-              ✓
-            </div>
-            <span className="font-medium text-green-800">
-              所有场景图片生成完成！({generatedImages.length} 张)
-            </span>
+            <div className="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center">✓</div>
+            <span className="font-medium text-green-800">所有场景图片生成完成！({generatedImages.length} 张)</span>
           </div>
         </div>
       )}

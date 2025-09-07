@@ -20,6 +20,7 @@ export default function StoryApp() {
     isLoading: false,
     error: null,
   });
+  const [characterTextPrompt, setCharacterTextPrompt] = useState<string>('');
 
   // 处理图片上传
   const handleImageUpload = useCallback((file: File | null, url: string | null) => {
@@ -32,20 +33,21 @@ export default function StoryApp() {
 
   // 从图片上传进入故事编写
   const handleImageNext = useCallback(() => {
-    if (!appState.characterImage) {
-      setAppState(prev => ({
-        ...prev,
-        error: '请先上传角色图片',
-      }));
-      return;
-    }
-    
     setAppState(prev => ({
       ...prev,
       currentStep: 'story',
       error: null,
     }));
   }, [appState.characterImage]);
+
+  // 跳过主角设置，直接进入讲故事
+  const handleSkipCharacter = useCallback(() => {
+    setAppState(prev => ({
+      ...prev,
+      currentStep: 'story',
+      error: null,
+    }));
+  }, []);
 
   // 处理故事变化
   const handleStoryChange = useCallback((story: string) => {
@@ -58,14 +60,6 @@ export default function StoryApp() {
 
   // 进入分镜生成步骤
   const handleStoryNext = useCallback(() => {
-    if (!appState.characterImage) {
-      setAppState(prev => ({
-        ...prev,
-        error: '请先上传角色图片',
-      }));
-      return;
-    }
-    
     if (appState.story.trim().length < 50) {
       setAppState(prev => ({
         ...prev,
@@ -233,6 +227,9 @@ export default function StoryApp() {
             currentImage={appState.characterImage}
             isLoading={appState.isLoading}
             onNext={handleImageNext}
+            onSkip={handleSkipCharacter}
+            onCharacterPromptSubmit={setCharacterTextPrompt}
+            initialCharacterPrompt={characterTextPrompt}
           />
         )}
 
@@ -248,7 +245,7 @@ export default function StoryApp() {
         {appState.currentStep === 'storyboard' && (
           <StoryboardGenerator
             story={appState.story}
-            characterImage={appState.characterImage!}
+            characterImage={appState.characterImage}
             onStoryboardsGenerated={handleStoryboardsGenerated}
             isLoading={appState.isLoading}
           />
@@ -257,7 +254,10 @@ export default function StoryApp() {
         {appState.currentStep === 'generation' && (
           <ImageGenerator
             storyboards={appState.storyboards}
-            characterImage={appState.characterImage!}
+            characterImage={appState.characterImage}
+            characterPrompt={characterTextPrompt}
+            story={appState.story}
+            onReferenceReady={(url) => setAppState(prev => ({ ...prev, characterImage: url }))}
             onImagesGenerated={handleImagesGenerated}
             isLoading={appState.isLoading}
           />
