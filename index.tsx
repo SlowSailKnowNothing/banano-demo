@@ -5,7 +5,7 @@
 import '@tailwindcss/browser';
 
 import ReactDOM from 'react-dom/client';
-import Home from './Home';
+import StoryApp from './StoryApp';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<Home />);
+root.render(<StoryApp />);
