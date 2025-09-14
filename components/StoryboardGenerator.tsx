@@ -13,6 +13,7 @@ export default function StoryboardGenerator({
   onStoryboardsGenerated, 
   isLoading = false,
   apiKey,
+  customPrompt,
 }: StoryboardGeneratorProps) {
   const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
   const [currentStep, setCurrentStep] = useState<'ready' | 'generating' | 'completed'>('ready');
@@ -39,6 +40,8 @@ export default function StoryboardGenerator({
 3. 环境设定 (setting)
 4. 情感氛围 (mood)
 
+(如果提供了全局自定义提示，请遵循这些偏好：${customPrompt || '无'})
+
 故事内容：
 ${story}
 
@@ -62,7 +65,7 @@ ${story}
 - 每个分镜都应该能独立成为一幅画面
 `;
 
-      const text = await generateText(apiKey, prompt, 'openrouter/sonoma-sky-alpha');
+      const text = await generateText(apiKey, prompt, 'google/gemini-2.5-flash');
 
       // 解析 JSON 响应
       let parsedResponse;

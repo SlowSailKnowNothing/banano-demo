@@ -12,7 +12,8 @@ export interface AppState {
   generatedImages: GeneratedImage[];
   isLoading: boolean;
   error: string | null;
-  apiKey: string | null;  
+  apiKey: string | null;
+  customPrompt?: string | null;
 }
 
 // 角色图片信息
@@ -51,6 +52,8 @@ export interface ImageUploadProps {
   onSkip?: () => void;
   onCharacterPromptSubmit?: (prompt: string) => void;
   initialCharacterPrompt?: string;
+  onGlobalPromptChange?: (prompt: string) => void;
+  initialGlobalPrompt?: string;
 }
 
 // 故事编辑器组件的属性
@@ -68,6 +71,7 @@ export interface StoryboardGeneratorProps {
   onStoryboardsGenerated: (storyboards: Storyboard[]) => void;
   isLoading?: boolean;
   apiKey?: string;
+  customPrompt?: string;
 }
 
 // 图片生成器组件的属性
@@ -80,6 +84,7 @@ export interface ImageGeneratorProps {
   onImagesGenerated: (images: GeneratedImage[]) => void;
   isLoading?: boolean;
   apiKey?: string;
+  customPrompt?: string;
 }
 
 // Gemini API 相关类型

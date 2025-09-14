@@ -22,6 +22,9 @@ export default function StoryApp() {
     apiKey: null,
   });
   const [characterTextPrompt, setCharacterTextPrompt] = useState<string>('');
+  const [customPrompt, setCustomPrompt] = useState<string>(() => {
+    try { return localStorage.getItem('globalCustomPrompt') || ''; } catch { return ''; }
+  });
 
   // Vite 通过 define 注入了 process.env.OPENROUTER_API_KEY，这里声明以避免 TS 报错
   declare const process: any;
@@ -309,6 +312,11 @@ export default function StoryApp() {
             onSkip={handleSkipCharacter}
             onCharacterPromptSubmit={setCharacterTextPrompt}
             initialCharacterPrompt={characterTextPrompt}
+            onGlobalPromptChange={(p) => {
+              setCustomPrompt(p);
+              try { localStorage.setItem('globalCustomPrompt', p); } catch {}
+            }}
+            initialGlobalPrompt={customPrompt}
           />
         )}
 
@@ -328,6 +336,7 @@ export default function StoryApp() {
             onStoryboardsGenerated={handleStoryboardsGenerated}
             isLoading={appState.isLoading}
             apiKey={appState.apiKey || undefined}
+            customPrompt={customPrompt}
           />
         )}
 
@@ -341,6 +350,7 @@ export default function StoryApp() {
             onImagesGenerated={handleImagesGenerated}
             isLoading={appState.isLoading}
             apiKey={appState.apiKey || undefined}
+            customPrompt={customPrompt}
           />
         )}
 

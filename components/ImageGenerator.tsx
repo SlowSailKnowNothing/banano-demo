@@ -16,6 +16,7 @@ export default function ImageGenerator({
   onImagesGenerated, 
   isLoading = false,
   apiKey,
+  customPrompt,
 }: ImageGeneratorProps) {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [currentGenerating, setCurrentGenerating] = useState<string | null>(null);
@@ -48,7 +49,7 @@ export default function ImageGenerator({
     const identity = characterPrompt?.trim() || story.slice(0, 300);
     if (!identity) return null;
 
-    const preface = `Create a clean, front-facing portrait or full-body illustration of the main character for a children's storybook. White or simple background. Rich colors.`;
+    const preface = `Create a clean, front-facing portrait or full-body illustration of the main character for a children's storybook. White or simple background. Rich colors. ${customPrompt ? `Global preferences: ${customPrompt}` : ''}`;
     const prompt = `${preface}\n\nMain character identity: ${identity}`;
     
     try {
@@ -68,7 +69,7 @@ export default function ImageGenerator({
       throw new Error('未设置 API Key');
     }
     const prompt = `
-基于提供的角色图片，生成一个新的场景图片。请尽量保持角色的外观特征尤其是绘图风格一致，如无法确定也需输出插画。
+基于提供的角色图片，生成一个新的场景图片。请保持角色的外观特征（发色、眼睛、服装风格等）完全一致。
 
 场景信息：
 - 场景描述: ${storyboard.description}
@@ -81,6 +82,7 @@ export default function ImageGenerator({
 - 插画风格，色彩丰富
 - 适合儿童故事书的视觉效果
 - 清晰的构图和良好的光影效果
+${customPrompt ? `\n全局偏好：${customPrompt}` : ''}
 
 请确保生成的图片中角色的外观与提供的参考图片保持高度一致。
 `;

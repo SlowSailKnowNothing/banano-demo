@@ -13,12 +13,15 @@ export default function ImageUpload({
   onNext,
   onSkip,
   onCharacterPromptSubmit,
-  initialCharacterPrompt
+  initialCharacterPrompt,
+  onGlobalPromptChange,
+  initialGlobalPrompt
 }: ImageUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [characterPrompt, setCharacterPrompt] = useState(initialCharacterPrompt || '');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [globalPrompt, setGlobalPrompt] = useState(initialGlobalPrompt || '');
 
   // 处理文件选择
   const handleFileSelect = useCallback((file: File) => {
@@ -201,42 +204,67 @@ export default function ImageUpload({
         </div>
       )}
 
+      {/* 全局自定义 Prompt（可选） */}
+      <div className="mt-6">
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            全局自定义 Prompt（可选）
+          </label>
+          <textarea
+            value={globalPrompt}
+            onChange={(e) => {
+              setGlobalPrompt(e.target.value);
+              onGlobalPromptChange?.(e.target.value);
+            }}
+            placeholder="例如：保持温暖柔和的色调，卡通插画风，统一的光照方向；生成连贯的故事情节，有起承转合；图片构图遵循三分法。"
+            className="w-full p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            rows={3}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            该提示将影响分镜生成与图片生成，留空则使用默认提示。
+          </p>
+        </div>
+      </div>
+
       {/* 或者：用文字描述主角 / 或跳过 */}
       {!currentImage && (
         <div className="mt-6 space-y-3">
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              不上传图片？用文字描述你的主角（可选）
-            </label>
-            <textarea
-              value={characterPrompt}
-              onChange={(e) => setCharacterPrompt(e.target.value)}
-              placeholder="例如：一只戴着蓝色围巾的小狐狸，绿色眼睛，开朗勇敢"
-              className="w-full p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows={3}
-              disabled={isGenerating}
-            />
-            <div className="mt-2 flex items-center gap-2">
-              <button
-                onClick={handleGenerateCharacter}
-                disabled={isGenerating || !characterPrompt.trim()}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-md disabled:opacity-60"
-              >
-                <Wand2 className="w-4 h-4" />
-                依据文字去生成主角（稍后生成）
-              </button>
-              {onSkip && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                不上传图片？用文字描述你的主角（可选）
+              </label>
+              <textarea
+                value={characterPrompt}
+                onChange={(e) => setCharacterPrompt(e.target.value)}
+                placeholder="例如：一只戴着蓝色围巾的小狐狸，绿色眼睛，开朗勇敢"
+                className="w-full p-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                rows={3}
+                disabled={isGenerating}
+              />
+              <div className="mt-2 flex items-center gap-2">
                 <button
-                  onClick={onSkip}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700"
+                  onClick={handleGenerateCharacter}
+                  disabled={isGenerating || !characterPrompt.trim()}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-md disabled:opacity-60"
                 >
-                  先不设置主角，直接讲故事
+                  <Wand2 className="w-4 h-4" />
+                  依据文字去生成主角（稍后生成）
                 </button>
-              )}
+                {onSkip && (
+                  <button
+                    onClick={onSkip}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-gray-700"
+                  >
+                    先不设置主角，直接讲故事
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                提示：我们会在“生成图片”阶段根据你的文字描述先生成主角的参考图，再继续生成分镜场景。
+              </p>
             </div>
-            <p className="text-xs text-gray-500 mt-2">
-              提示：我们会在“生成图片”阶段根据你的文字描述先生成主角的参考图，再继续生成分镜场景。
-            </p>
+
           </div>
         </div>
       )}
