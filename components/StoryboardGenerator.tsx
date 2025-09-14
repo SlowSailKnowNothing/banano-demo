@@ -4,16 +4,15 @@
  */
 import { Film, CheckCircle } from 'lucide-react';
 import { useState, useCallback } from 'react';
-import { GoogleGenAI } from '@google/genai';
 import { StoryboardGeneratorProps, Storyboard } from '../types';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { generateText } from '../utils/openrouter';
 
 export default function StoryboardGenerator({ 
   story, 
   characterImage, 
   onStoryboardsGenerated, 
-  isLoading = false 
+  isLoading = false,
+  apiKey,
 }: StoryboardGeneratorProps) {
   const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
   const [currentStep, setCurrentStep] = useState<'ready' | 'generating' | 'completed'>('ready');
@@ -24,6 +23,10 @@ export default function StoryboardGenerator({
   // 生成分镜
   const generateStoryboards = useCallback(async () => {
     if (!story.trim()) return;
+    if (!apiKey) {
+      setError('请先设置 API Key');
+      return;
+    }
 
     setCurrentStep('generating');
     setError(null);
@@ -59,11 +62,7 @@ ${story}
 - 每个分镜都应该能独立成为一幅画面
 `;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-      });
-      const text = await response.text;
+      const text = await generateText(apiKey, prompt, 'openrouter/sonoma-sky-alpha');
 
       // 解析 JSON 响应
       let parsedResponse;
@@ -102,7 +101,7 @@ ${story}
       setError(error instanceof Error ? error.message : '生成分镜时发生未知错误');
       setCurrentStep('ready');
     }
-  }, [story, onStoryboardsGenerated]);
+  }, [story, onStoryboardsGenerated, apiKey]);
 
   // 重新生成分镜
   const handleRegenerate = useCallback(() => {
@@ -143,12 +142,12 @@ ${story}
         <div className="text-center mb-6">
           <button
             onClick={generateStoryboards}
-            disabled={isLoading}
+            disabled={isLoading || !apiKey}
             className="px-8 py-3 bg-purple-600 text-white rounded-lg font-medium
                      hover:bg-purple-700 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2
                      disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
           >
-            {isLoading ? '生成中...' : '开始生成分镜'}
+            {isLoading ? '生成中...' : (!apiKey ? '请先设置 API Key' : '开始生成分镜')}
           </button>
         </div>
       )}

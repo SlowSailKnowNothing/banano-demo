@@ -1,5 +1,5 @@
 {
-  "name": "copy-of-gemini-co-drawing",
+  "name": "openrouter-story-generator",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,11 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^0.7.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "@tailwindcss/browser": "^4.1.2",
     "lucide-react": "^0.487.0",
-    "@tailwindcss/browser": "^4.1.2"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

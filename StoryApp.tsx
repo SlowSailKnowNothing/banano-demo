@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ChevronLeft, BookOpen, Camera, Film, Palette } from 'lucide-react';
 import ImageUpload from './components/ImageUpload';
 import StoryEditor from './components/StoryEditor';
@@ -19,8 +19,40 @@ export default function StoryApp() {
     generatedImages: [],
     isLoading: false,
     error: null,
+    apiKey: null,
   });
   const [characterTextPrompt, setCharacterTextPrompt] = useState<string>('');
+
+  // Vite 通过 define 注入了 process.env.OPENROUTER_API_KEY，这里声明以避免 TS 报错
+  declare const process: any;
+
+  // 初始化加载 API Key：优先使用用户在本地保存的 Key；否则回退到环境变量
+  useEffect(() => {
+    const storedKey = (() => {
+      try {
+        return localStorage.getItem('userApiKey');
+      } catch {
+        return null;
+      }
+    })();
+    const envKey = process?.env?.OPENROUTER_API_KEY || null;
+    const key = storedKey || envKey || null;
+    if (key && appState.apiKey !== key) {
+      setAppState(prev => ({ ...prev, apiKey: key }));
+    }
+  }, []);
+
+  // 提供设置 API Key 的方法（将来供 UI 调用）
+  const setUserApiKey = useCallback((key: string | null) => {
+    try {
+      if (key) {
+        localStorage.setItem('userApiKey', key);
+      } else {
+        localStorage.removeItem('userApiKey');
+      }
+    } catch {}
+    setAppState(prev => ({ ...prev, apiKey: key }));
+  }, []);
 
   // 处理图片上传
   const handleImageUpload = useCallback((file: File | null, url: string | null) => {
@@ -120,7 +152,7 @@ export default function StoryApp() {
       }
     });
 
-    setAppState({
+    setAppState(prev => ({
       currentStep: 'upload',
       characterImage: null,
       story: '',
@@ -128,7 +160,9 @@ export default function StoryApp() {
       generatedImages: [],
       isLoading: false,
       error: null,
-    });
+      // 重置流程中保留当前已生效的 API Key（本地或环境）
+      apiKey: prev.apiKey,
+    }));
   }, [appState]);
 
   // 步骤指示器数据
@@ -162,13 +196,26 @@ export default function StoryApp() {
                 AI 故事分镜生成器
               </h1>
             </div>
-            
-            <button
-              onClick={handleRestart}
-              className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
-            >
-              重新开始
-            </button>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => {
+                  const input = window.prompt('请输入你的 OpenRouter API Key（以便在本地使用）');
+                  if (input && input.trim()) {
+                    setUserApiKey(input.trim());
+                  }
+                }}
+                className="text-sm text-blue-600 hover:text-blue-700 transition-colors"
+                title={appState.apiKey ? '已设置 API Key，点击可更改' : '点击设置你的 API Key'}
+              >
+                {appState.apiKey ? '更改 API Key' : '设置 API Key'}
+              </button>
+              <button
+                onClick={handleRestart}
+                className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                重新开始
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -221,6 +268,38 @@ export default function StoryApp() {
 
       {/* 主要内容区域 */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* 首次提醒设置 API Key：当没有用户 Key 且没有环境 Key 时显示 */}
+        {!appState.apiKey && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+            <p className="text-yellow-800 font-medium">需要设置 API Key</p>
+            <p className="text-yellow-700 text-sm mt-1">为了使用生成能力，请设置你的 OpenRouter API Key。不会上传到服务器，仅保存在浏览器本地。</p>
+            <div className="mt-3 flex items-center space-x-3">
+              <button
+                onClick={() => {
+                  const input = window.prompt('请输入你的 OpenRouter API Key');
+                  if (input && input.trim()) setUserApiKey(input.trim());
+                }}
+                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 text-sm"
+              >
+                现在设置
+              </button>
+              <button
+                onClick={() => {
+                  // 若存在环境变量，则使用环境变量；否则提示必须设置
+                  const envKey = (process && process.env && process.env.OPENROUTER_API_KEY) || null;
+                  if (envKey) {
+                    setUserApiKey(envKey);
+                  } else {
+                    alert('未检测到环境变量 OPENROUTER_API_KEY，请输入你的 API Key');
+                  }
+                }}
+                className="px-4 py-2 border border-yellow-600 text-yellow-800 rounded hover:bg-yellow-100 text-sm"
+              >
+                使用环境变量
+              </button>
+            </div>
+          </div>
+        )}
         {appState.currentStep === 'upload' && (
           <ImageUpload
             onImageUpload={handleImageUpload}
@@ -248,6 +327,7 @@ export default function StoryApp() {
             characterImage={appState.characterImage}
             onStoryboardsGenerated={handleStoryboardsGenerated}
             isLoading={appState.isLoading}
+            apiKey={appState.apiKey || undefined}
           />
         )}
 
@@ -260,6 +340,7 @@ export default function StoryApp() {
             onReferenceReady={(url) => setAppState(prev => ({ ...prev, characterImage: url }))}
             onImagesGenerated={handleImagesGenerated}
             isLoading={appState.isLoading}
+            apiKey={appState.apiKey || undefined}
           />
         )}
 
@@ -336,7 +417,7 @@ export default function StoryApp() {
       <footer className="bg-white border-t mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center text-gray-500 text-sm">
-            <p>由 Gemini AI 驱动的故事分镜生成器</p>
+            <p>由 OpenRouter AI 驱动的故事分镜生成器</p>
             <p className="mt-1">上传角色图片 → 编写故事 → 生成分镜 → 创建图片</p>
           </div>
         </div>

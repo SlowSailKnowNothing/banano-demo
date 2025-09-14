@@ -12,6 +12,7 @@ export interface AppState {
   generatedImages: GeneratedImage[];
   isLoading: boolean;
   error: string | null;
+  apiKey: string | null;  
 }
 
 // 角色图片信息
@@ -66,6 +67,7 @@ export interface StoryboardGeneratorProps {
   characterImage: string | null;
   onStoryboardsGenerated: (storyboards: Storyboard[]) => void;
   isLoading?: boolean;
+  apiKey?: string;
 }
 
 // 图片生成器组件的属性
@@ -77,6 +79,7 @@ export interface ImageGeneratorProps {
   onReferenceReady?: (url: string) => void;
   onImagesGenerated: (images: GeneratedImage[]) => void;
   isLoading?: boolean;
+  apiKey?: string;
 }
 
 // Gemini API 相关类型

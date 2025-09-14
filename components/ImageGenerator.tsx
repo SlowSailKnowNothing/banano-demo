@@ -4,10 +4,8 @@
  */
 import { Palette, Download, RefreshCw } from 'lucide-react';
 import { useState, useCallback } from 'react';
-import { GoogleGenAI, Modality } from '@google/genai';
 import { ImageGeneratorProps, GeneratedImage, Storyboard } from '../types';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { generateImage, getBase64FromImageUrl } from '../utils/openrouter';
 
 export default function ImageGenerator({ 
   storyboards, 
@@ -17,6 +15,7 @@ export default function ImageGenerator({
   onReferenceReady,
   onImagesGenerated, 
   isLoading = false,
+  apiKey,
 }: ImageGeneratorProps) {
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [currentGenerating, setCurrentGenerating] = useState<string | null>(null);
@@ -41,33 +40,35 @@ export default function ImageGenerator({
   };
   // 如果没有参考图，先生成“主角立绘”作为统一参考
   const ensureReferenceImage = useCallback(async (): Promise<string | null> => {
+    if (!apiKey) {
+      setError('请先设置 API Key');
+      return null;
+    }
     if (referenceReady && characterImage) return characterImage;
     const identity = characterPrompt?.trim() || story.slice(0, 300);
     if (!identity) return null;
 
     const preface = `Create a clean, front-facing portrait or full-body illustration of the main character for a children's storybook. White or simple background. Rich colors.`;
-    const parts = [{ text: `${preface}\n\nMain character identity: ${identity}` }];
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image-preview',
-      contents: parts as any,
-      config: { responseModalities: [Modality.IMAGE] },
-    });
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if ((part as any).inlineData?.data) {
-        const data = (part as any).inlineData.data as string;
-        const url = `data:image/png;base64,${data}`;
-        setReferenceReady(true);
-        onReferenceReady?.(url);
-        return url;
-      }
+    const prompt = `${preface}\n\nMain character identity: ${identity}`;
+    
+    try {
+      const imageUrl = await generateImage(apiKey, prompt, undefined, 'google/gemini-2.5-flash-image-preview');
+      setReferenceReady(true);
+      onReferenceReady?.(imageUrl);
+      return imageUrl;
+    } catch (error) {
+      console.error('Failed to generate reference image:', error);
+      return null;
     }
-    return null;
-  }, [characterImage, characterPrompt, story, onReferenceReady, referenceReady]);
+  }, [characterImage, characterPrompt, story, onReferenceReady, referenceReady, apiKey]);
 
   // 生成单个场景图片（带一次内部语义重试，非指数退避）
   const generateSingleImage = useCallback(async (storyboard: Storyboard): Promise<GeneratedImage> => {
+    if (!apiKey) {
+      throw new Error('未设置 API Key');
+    }
     const prompt = `
-基于提供的角色图片，生成一个新的场景图片。请保持角色的外观特征（发色、眼睛、服装风格等）完全一致。
+基于提供的角色图片，生成一个新的场景图片。请尽量保持角色的外观特征尤其是绘图风格一致，如无法确定也需输出插画。
 
 场景信息：
 - 场景描述: ${storyboard.description}
@@ -85,33 +86,6 @@ export default function ImageGenerator({
 `;
 
     try {
-      // 将角色图片（可能是 dataURL 或 blob: URL）转换为 base64
-      const getBase64FromImageUrl = async (url: string): Promise<{ base64: string; mimeType: string }> => {
-        // data URL 直接解析
-        if (url.startsWith('data:')) {
-          const commaIdx = url.indexOf(',');
-          const header = url.substring(5, url.indexOf(';'));
-          const mimeType = header;
-          const base64 = url.substring(commaIdx + 1);
-          return { base64, mimeType };
-        }
-        // blob/object URL：先拉取为 Blob，再转 dataURL
-        const res = await fetch(url);
-        const blob = await res.blob();
-        const mimeType = blob.type || 'image/png';
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const dataUrl = reader.result as string;
-            resolve(dataUrl.split(',')[1]);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-        return { base64, mimeType };
-      };
-
-      let promptParts: any[];
       // 如果没有参考图，但有故事文本，则尝试从故事中抽取主角身份
       let inferredIdentity = '';
       if (!characterImage && !characterPrompt && story) {
@@ -119,55 +93,39 @@ export default function ImageGenerator({
         inferredIdentity = story.slice(0, 300);
       }
 
+      let referenceImageBase64: string | undefined;
+      let finalPrompt = prompt;
+
       if (characterImage) {
-        const { base64: characterImageBase64, mimeType } = await getBase64FromImageUrl(characterImage);
-        promptParts = [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType,
-              data: characterImageBase64,
-            },
-          },
-        ];
+        const { base64 } = await getBase64FromImageUrl(characterImage);
+        referenceImageBase64 = base64;
       } else {
         // 无参考图：若有主角文字描述，或从故事推断主角身份
         const identityHint = (characterPrompt?.trim() || inferredIdentity)
           ? `Use this as the main character identity: ${characterPrompt?.trim() || inferredIdentity}. Keep the identity consistent across all scenes.`
           : 'If a character identity is implied, keep it consistent across scenes.';
-        promptParts = [{ text: `${prompt}\n\n${identityHint}` }];
+        finalPrompt = `${prompt}\n\n${identityHint}`;
       }
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image-preview',
-        contents: promptParts,
-        config: {
-          responseModalities: [Modality.IMAGE],
-        },
-      });
+      const imageUrl = await generateImage(
+        apiKey, 
+        finalPrompt, 
+        referenceImageBase64, 
+        'google/gemini-2.5-flash-image-preview'
+      );
       
-      // 查找返回的图片数据
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) {
-          const imageData = part.inlineData.data;
-          const imageUrl = `data:image/png;base64,${imageData}`;
-          
-          return {
-            id: `image-${storyboard.id}-${Date.now()}`,
-            storyboardId: storyboard.id,
-            imageUrl,
-            prompt,
-            generatedAt: new Date(),
-          };
-        }
-      }
-      // 未拿到图片则直接抛错，交由带超时控制的重试层处理
-      throw new Error('未收到图片数据');
+      return {
+        id: `image-${storyboard.id}-${Date.now()}`,
+        storyboardId: storyboard.id,
+        imageUrl,
+        prompt: finalPrompt,
+        generatedAt: new Date(),
+      };
     } catch (error) {
       console.error('生成图片时出错:', error);
       throw error;
     }
-  }, [characterImage]);
+  }, [characterImage, characterPrompt, story, apiKey]);
 
   // 带指数退避的重试封装
   const generateSingleImageWithRetry = useCallback(
@@ -197,6 +155,10 @@ export default function ImageGenerator({
   // 批量生成所有图片
   const generateAllImages = useCallback(async () => {
     if (!storyboards.length) return;
+    if (!apiKey) {
+      setError('请先设置 API Key');
+      return;
+    }
 
     setError(null);
     setProgress(0);
@@ -292,10 +254,14 @@ export default function ImageGenerator({
       setError(error instanceof Error ? error.message : '批量生成时发生未知错误');
       setCurrentGenerating(null);
     }
-  }, [storyboards, characterImage, generateSingleImage, onImagesGenerated]);
+  }, [storyboards, characterImage, generateSingleImage, onImagesGenerated, apiKey]);
 
   // 重新生成单个图片
   const regenerateImage = useCallback(async (storyboard: Storyboard) => {
+    if (!apiKey) {
+      setError('请先设置 API Key');
+      return;
+    }
     setCurrentGenerating(storyboard.id);
     setError(null);
     
@@ -324,11 +290,15 @@ export default function ImageGenerator({
     } finally {
       setCurrentGenerating(null);
     }
-  }, [generatedImages, generateSingleImageWithRetry, onImagesGenerated, failedIds]);
+  }, [generatedImages, generateSingleImageWithRetry, onImagesGenerated, failedIds, apiKey]);
 
   // 批量重试所有失败的场景
   const retryAllFailed = useCallback(async () => {
     if (failedIds.size === 0) return;
+    if (!apiKey) {
+      setError('请先设置 API Key');
+      return;
+    }
     setCurrentGenerating('retry');
     setError(null);
 
@@ -360,7 +330,7 @@ export default function ImageGenerator({
 
     setFailedIds(nextFailed);
     setCurrentGenerating(null);
-  }, [failedIds, storyboards, generatedImages, generateSingleImageWithRetry, onImagesGenerated]);
+  }, [failedIds, storyboards, generatedImages, generateSingleImageWithRetry, onImagesGenerated, apiKey]);
 
   // 下载图片
   const downloadImage = useCallback((imageUrl: string, sceneNumber: number) => {
@@ -398,12 +368,12 @@ export default function ImageGenerator({
         <div className="text-center mb-6">
           <button
             onClick={generateAllImages}
-            disabled={isLoading || storyboards.length === 0}
+            disabled={isLoading || storyboards.length === 0 || !apiKey}
             className="px-8 py-3 bg-blue-600 text-white rounded-lg font-medium
                      hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2
                      disabled:bg-gray-400 disabled:cursor-not-allowed transition-all"
           >
-            开始生成所有场景图片
+            {!apiKey ? '请先设置 API Key' : '开始生成所有场景图片'}
           </button>
           <p className="text-sm text-gray-500 mt-2">
             将为 {storyboards.length} 个场景生成图片，预计需要 {storyboards.length * 2} 分钟
@@ -508,7 +478,7 @@ export default function ImageGenerator({
                             onClick={() => regenerateImage(storyboard)}
                             className="text-xs text-blue-600 hover:text-blue-700 underline"
                           >
-                            单独生成
+                            {apiKey ? '单独生成' : '请先设置 API Key'}
                           </button>
                         </>
                       )}
